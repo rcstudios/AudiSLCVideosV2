@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#09090a">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>Audi Film Library</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="library-page">
+  <header class="library-header">
+    <div class="library-header-inner">
+      <div class="library-brand">
+        <p>Audi Salt Lake City</p>
+        <h1>Audi Film Library</h1>
+      </div>
+      <a class="back-link" href="index.html">← Back to showcase</a>
+    </div>
+  </header>
+
+  <main class="library-main">
+    <section class="library-intro">
+      <div>
+        <h2>All films</h2>
+        <p>Open any film in a new tab for testing. The library stays open so you can work through the list without losing your place.</p>
+      </div>
+      <span id="resultCount" class="result-count"></span>
+    </section>
+
+    <section class="library-tools" aria-label="Library filters">
+      <input id="searchInput" type="search" placeholder="Search title, source or film number…" autocomplete="off">
+      <select id="sourceFilter" aria-label="Filter by source">
+        <option value="all">All sources</option>
+        <option value="audi">Audi MediaTV</option>
+        <option value="youtube">YouTube</option>
+      </select>
+    </section>
+
+    <section id="videoList" class="video-list" aria-live="polite"></section>
+  </main>
+
+  <script src="videos.js"></script>
+  <script src="library.js"></script>
+</body>
+</html>

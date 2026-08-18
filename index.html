@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#050505">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
+  <title>Audi Film Showcase</title>
+
+  <!-- FAVICON: replace favicon.svg with your own .ico/.png/.svg file if desired. -->
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="player-page">
+  <main id="playerShell" class="player-shell" aria-label="Audi film player">
+    <div id="playerMount" class="player-mount"></div>
+  </main>
+
+  <section id="startScreen" class="start-screen">
+    <div class="start-card">
+      <p class="eyebrow">Audi Salt Lake City • Film Loop</p>
+      <h1 id="startHeading">Audi Film Showcase</h1>
+      <p id="startSubheading" class="subheading">
+        A continuously randomized collection of Audi films, heritage footage, motorsport and product trailers.
+      </p>
+
+      <button id="startButton" class="start-video-button" type="button" aria-label="Start Audi film showcase">
+        <span class="play-icon" aria-hidden="true">▶</span>
+        <span class="start-label">Start Random Playback</span>
+      </button>
+
+      <p class="fullscreen-note">Please put the player in <strong>fullscreen</strong> or press <strong>F11</strong>.</p>
+      <p class="start-links"><a href="library.html">Browse all films individually</a></p>
+    </div>
+  </section>
+
+  <aside id="nowPlaying" class="now-playing" aria-live="polite">
+    <strong id="nowTitle"></strong>
+    <span id="nowSource"></span>
+  </aside>
+
+  <nav class="kiosk-controls" aria-label="Playback controls">
+    <span id="cycleCounter" class="cycle-counter"></span>
+    <button id="nextButton" type="button">Next</button>
+    <button id="fullscreenButton" type="button">Fullscreen</button>
+    <a href="library.html">Library</a>
+  </nav>
+
+  <script src="videos.js"></script>
+  <script src="player-engine.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
