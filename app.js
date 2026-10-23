@@ -13,6 +13,8 @@
   const cycleCounter = document.getElementById("cycleCounter");
   const playerShell = document.getElementById("playerShell");
 
+  const FAILURE_KEY = "audiShowcasePlaybackFailuresV2";
+
   let shuffleBag = [];
   let currentVideo = null;
   let lastVideoNumber = null;
@@ -21,11 +23,46 @@
   let overlayTimer = null;
   let controlFadeTimer = null;
   let wakeLock = null;
+  const sessionFailed = new Set();
 
   const player = new window.AudiShowcasePlayer(stage, {
-    audiEndBufferSeconds: 4,
     onStatus: (message) => console.info(`[Audi Showcase] ${message}`)
   });
+
+  function readFailures() {
+    try { return JSON.parse(localStorage.getItem(FAILURE_KEY) || "{}"); }
+    catch (_) { return {}; }
+  }
+
+  function writeFailures(value) {
+    try { localStorage.setItem(FAILURE_KEY, JSON.stringify(value)); }
+    catch (_) {}
+  }
+
+  function recordFailure(video, result) {
+    const failures = readFailures();
+    failures[String(video.number)] = {
+      number: video.number,
+      title: video.title,
+      source: video.source,
+      type: video.type,
+      id: video.id,
+      reason: result.reason || "unknown",
+      errorCode: typeof result.errorCode !== "undefined" ? result.errorCode : null,
+      detail: result.childDetail || result.message || null,
+      time: new Date().toISOString()
+    };
+    writeFailures(failures);
+  }
+
+  function clearFailure(video) {
+    const failures = readFailures();
+    const key = String(video.number);
+    if (Object.prototype.hasOwnProperty.call(failures, key)) {
+      delete failures[key];
+      writeFailures(failures);
+    }
+  }
 
   function secureRandomFraction() {
     if (window.crypto && window.crypto.getRandomValues) {
@@ -46,15 +83,26 @@
   }
 
   function refillShuffleBag() {
-    shuffleBag = shuffledCopy(videos);
+    let eligible = videos.filter(video => !sessionFailed.has(video.number));
+
+    // If every source somehow fails, clear the quarantine rather than leaving
+    // the kiosk with an empty playlist. A page refresh also clears quarantine.
+    if (!eligible.length) {
+      sessionFailed.clear();
+      eligible = videos.slice();
+    }
+
+    shuffleBag = shuffledCopy(eligible);
     cycle += 1;
 
-    // Prevent the last video of the previous cycle from immediately repeating.
     if (shuffleBag.length > 1 && shuffleBag[0].number === lastVideoNumber) {
       [shuffleBag[0], shuffleBag[1]] = [shuffleBag[1], shuffleBag[0]];
     }
 
-    cycleCounter.textContent = `Random cycle ${cycle} • ${videos.length} films`;
+    const skipped = sessionFailed.size;
+    cycleCounter.textContent = skipped
+      ? `Random cycle ${cycle} • ${eligible.length}/${videos.length} active • ${skipped} skipped this session`
+      : `Random cycle ${cycle} • ${videos.length} films`;
   }
 
   function drawNextVideo() {
@@ -62,9 +110,9 @@
     return shuffleBag.shift();
   }
 
-  function showNowPlaying(video) {
+  function showNowPlaying(video, suffix = "") {
     nowTitle.textContent = video.title;
-    nowSource.textContent = `${video.source} • Film ${video.number}`;
+    nowSource.textContent = `${video.source} • Film ${video.number}${suffix}`;
     nowPlaying.classList.add("visible");
     clearTimeout(overlayTimer);
     overlayTimer = setTimeout(() => nowPlaying.classList.remove("visible"), 5500);
@@ -76,13 +124,23 @@
     lastVideoNumber = video.number;
     showNowPlaying(video);
 
-    player.play(video, () => {
+    player.play(video, (result = {}) => {
       if (!running) return;
       const finishedVideo = video;
+
+      if (result.ok === false) {
+        sessionFailed.add(video.number);
+        recordFailure(video, result);
+        showNowPlaying(video, " • unavailable — skipping");
+        console.warn("[Audi Showcase] Source skipped for this session:", video, result);
+      } else {
+        clearFailure(video);
+      }
+
       setTimeout(() => {
-        // If somebody manually skipped during the transition, do not skip twice.
+        // A manual skip during this transition should not trigger a second skip.
         if (running && currentVideo === finishedVideo) playNext();
-      }, 500);
+      }, result.ok === false ? 900 : 450);
     });
   }
 
@@ -97,9 +155,7 @@
       if (!document.fullscreenElement && target.requestFullscreen) {
         await target.requestFullscreen();
       }
-    } catch (_) {
-      // F11 remains available when browser fullscreen is blocked (e.g. CodePen iframe).
-    }
+    } catch (_) {}
   }
 
   async function requestWakeLock() {
@@ -139,7 +195,6 @@
   playerShell.addEventListener("dblclick", requestFullscreen);
   nextButton.addEventListener("click", playNext);
   fullscreenButton.addEventListener("click", requestFullscreen);
-
 
   document.addEventListener("mousemove", () => {
     if (!running) return;

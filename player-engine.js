@@ -1,4 +1,12 @@
-/* Shared mixed-source player for Audi MediaTV + YouTube. */
+/*
+  Shared mixed-source player for Audi MediaTV + YouTube.
+
+  Resilience rules:
+  - A source error NEVER stops the showcase.
+  - YouTube videos have both API error handling and a startup watchdog.
+  - Audi videos have a child-player startup watchdog plus a runtime fallback.
+  - The catalog is never edited automatically; failures are reported to app.js.
+*/
 (function () {
   "use strict";
 
@@ -9,10 +17,25 @@
     if (youtubeApiPromise) return youtubeApiPromise;
 
     youtubeApiPromise = new Promise((resolve, reject) => {
+      let settled = false;
+      const finishResolve = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(apiTimeout);
+        resolve(window.YT);
+      };
+      const finishReject = (error) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(apiTimeout);
+        youtubeApiPromise = null;
+        reject(error);
+      };
+
       const previousCallback = window.onYouTubeIframeAPIReady;
       window.onYouTubeIframeAPIReady = function () {
         if (typeof previousCallback === "function") previousCallback();
-        resolve(window.YT);
+        if (window.YT && window.YT.Player) finishResolve();
       };
 
       const existing = document.querySelector('script[src="https://www.youtube.com/iframe_api"]');
@@ -20,13 +43,14 @@
         const script = document.createElement("script");
         script.src = "https://www.youtube.com/iframe_api";
         script.async = true;
-        script.onerror = () => reject(new Error("Unable to load the YouTube IFrame API."));
+        script.onerror = () => finishReject(new Error("Unable to load the YouTube IFrame API."));
         document.head.appendChild(script);
       }
 
-      setTimeout(() => {
-        if (window.YT && window.YT.Player) resolve(window.YT);
-      }, 3000);
+      const apiTimeout = setTimeout(() => {
+        if (window.YT && window.YT.Player) finishResolve();
+        else finishReject(new Error("YouTube IFrame API timed out."));
+      }, 12000);
     });
 
     return youtubeApiPromise;
@@ -36,16 +60,21 @@
     constructor(mountElement, options = {}) {
       this.mount = mountElement;
       this.options = {
-        audiEndBufferSeconds: 4,
         onStatus: null,
+        youtubeStartupTimeoutSeconds: 18,
+        youtubePlaybackSafetySeconds: 120,
+        youtubeUnknownMaxSeconds: 7200,
+        audiStartupTimeoutSeconds: 22,
+        audiHardFallbackSeconds: 35,
         ...options
       };
+
       this.youtubePlayer = null;
-      this.audiTimer = null;
-      this.audiLoadFallback = null;
-      this.audiObserver = null;
+      this.audiFrame = null;
+      this.timers = new Set();
       this.playToken = 0;
       this.current = null;
+      this.audiMessageHandler = null;
     }
 
     status(message) {
@@ -54,21 +83,42 @@
       }
     }
 
+    setTimer(fn, ms) {
+      const id = setTimeout(() => {
+        this.timers.delete(id);
+        fn();
+      }, ms);
+      this.timers.add(id);
+      return id;
+    }
+
+    clearTimer(id) {
+      if (!id) return;
+      clearTimeout(id);
+      this.timers.delete(id);
+    }
+
+    clearAllTimers() {
+      this.timers.forEach(id => clearTimeout(id));
+      this.timers.clear();
+    }
+
     destroy() {
       this.playToken += 1;
       this.current = null;
+      this.clearAllTimers();
 
-      if (this.audiTimer) clearTimeout(this.audiTimer);
-      if (this.audiLoadFallback) clearTimeout(this.audiLoadFallback);
-      if (this.audiObserver) this.audiObserver.disconnect();
-      this.audiTimer = null;
-      this.audiLoadFallback = null;
-      this.audiObserver = null;
+      if (this.audiMessageHandler) {
+        window.removeEventListener("message", this.audiMessageHandler);
+        this.audiMessageHandler = null;
+      }
 
       if (this.youtubePlayer && typeof this.youtubePlayer.destroy === "function") {
         try { this.youtubePlayer.destroy(); } catch (_) {}
       }
+
       this.youtubePlayer = null;
+      this.audiFrame = null;
       this.mount.replaceChildren();
     }
 
@@ -81,138 +131,190 @@
       if (video.type === "youtube") {
         return this.playYouTube(video, onEnd, token);
       }
+
       return this.playAudi(video, onEnd, token);
     }
 
     async playYouTube(video, onEnd, token) {
-      /*
-        YouTube error 153 means the request did not provide an HTTP Referer
-        or equivalent API client identity. GitHub Pages serves this project
-        over HTTPS with a normal page origin/referrer, which is why the site
-        should be opened from its GitHub Pages URL rather than as file://.
-      */
+      let completed = false;
+      let startupTimer = null;
+      let playbackTimer = null;
+      let started = false;
+
+      const finish = (ok, reason, extra = {}) => {
+        if (completed || token !== this.playToken) return;
+        completed = true;
+        this.clearTimer(startupTimer);
+        this.clearTimer(playbackTimer);
+
+        if (ok) this.status(`Finished: ${video.title}`);
+        else this.status(`Skipped unavailable video: ${video.title} (${reason})`);
+
+        if (typeof onEnd === "function") {
+          onEnd({ ok, reason, video, ...extra });
+        }
+      };
+
       if (window.location.protocol === "file:") {
-        this.status(`YouTube requires the hosted GitHub Pages version: ${video.title}`);
-        setTimeout(() => {
-          if (token === this.playToken && typeof onEnd === "function") {
-            onEnd({ reason: "file-protocol", video, errorCode: 153 });
-          }
-        }, 2500);
+        this.setTimer(() => finish(false, "youtube-file-protocol", { errorCode: 153 }), 1200);
         return;
       }
 
+      startupTimer = this.setTimer(() => {
+        finish(false, "youtube-startup-timeout");
+      }, this.options.youtubeStartupTimeoutSeconds * 1000);
+
       try {
         const YT = await loadYouTubeApi();
-        if (token !== this.playToken) return;
+        if (token !== this.playToken || completed) return;
 
-        const iframe = document.createElement("iframe");
-        iframe.className = "youtube-target";
-        iframe.id = `youtube-${video.number}-${Date.now()}`;
-        iframe.title = video.title;
-        iframe.allow = "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
-        iframe.allowFullscreen = true;
-        iframe.referrerPolicy = "strict-origin-when-cross-origin";
-        iframe.frameBorder = "0";
+        const target = document.createElement("div");
+        target.className = "youtube-target";
+        target.id = `youtube-${video.number}-${Date.now()}`;
+        this.mount.appendChild(target);
 
-        const origin = window.location.origin;
-        const params = new URLSearchParams({
-          enablejsapi: "1",
-          autoplay: "1",
-          controls: "1",
-          rel: "0",
-          playsinline: "1",
-          iv_load_policy: "3",
-          fs: "1",
-          origin
-        });
-        iframe.src = `https://www.youtube.com/embed/${encodeURIComponent(video.id)}?${params.toString()}`;
-        this.mount.appendChild(iframe);
-
-        this.youtubePlayer = new YT.Player(iframe.id, {
+        this.youtubePlayer = new YT.Player(target.id, {
+          videoId: video.id,
+          host: "https://www.youtube.com",
+          playerVars: {
+            autoplay: 1,
+            controls: 1,
+            rel: 0,
+            playsinline: 1,
+            iv_load_policy: 3,
+            fs: 1,
+            origin: window.location.origin
+          },
           events: {
             onReady: (event) => {
-              if (token !== this.playToken) return;
-              this.status(`Playing: ${video.title}`);
+              if (token !== this.playToken || completed) return;
+              this.status(`Starting: ${video.title}`);
               try { event.target.playVideo(); } catch (_) {}
             },
+
             onStateChange: (event) => {
-              if (token !== this.playToken) return;
-              if (event.data === YT.PlayerState.ENDED && typeof onEnd === "function") {
-                onEnd({ reason: "ended", video });
+              if (token !== this.playToken || completed) return;
+
+              if (event.data === YT.PlayerState.PLAYING) {
+                if (!started) {
+                  started = true;
+                  this.clearTimer(startupTimer);
+                  startupTimer = null;
+                  this.status(`Playing: ${video.title}`);
+
+                  let duration = 0;
+                  try { duration = Number(event.target.getDuration()) || 0; } catch (_) {}
+                  const maxSeconds = duration > 0
+                    ? duration + this.options.youtubePlaybackSafetySeconds
+                    : this.options.youtubeUnknownMaxSeconds;
+
+                  playbackTimer = this.setTimer(() => {
+                    finish(false, "youtube-playback-timeout");
+                  }, maxSeconds * 1000);
+                }
+              }
+
+              if (event.data === YT.PlayerState.ENDED) {
+                finish(true, "ended");
               }
             },
+
             onError: (event) => {
-              if (token !== this.playToken) return;
+              if (token !== this.playToken || completed) return;
               const code = event && typeof event.data !== "undefined" ? event.data : "unknown";
-              this.status(`Skipped YouTube video (${code}): ${video.title}`);
-              setTimeout(() => {
-                if (token === this.playToken && typeof onEnd === "function") {
-                  onEnd({ reason: "error", video, errorCode: code });
-                }
-              }, 1800);
+              // Common codes: 2 invalid ID, 5 player error, 100 removed/private,
+              // 101/150 embedding blocked, 153 missing referrer/client identity.
+              this.setTimer(() => finish(false, "youtube-error", { errorCode: code }), 650);
             }
           }
         });
       } catch (error) {
-        if (token !== this.playToken) return;
-        this.status(`YouTube could not load: ${video.title}`);
-        setTimeout(() => {
-          if (token === this.playToken && typeof onEnd === "function") {
-            onEnd({ reason: "error", video });
-          }
-        }, 2500);
+        if (token !== this.playToken || completed) return;
+        finish(false, "youtube-api-error", { message: String(error && error.message || error) });
       }
     }
 
     playAudi(video, onEnd, token) {
-      const host = document.createElement("div");
-      host.className = "audi-embed-host";
-      this.mount.appendChild(host);
+      let completed = false;
+      let ready = false;
+      let startupTimer = null;
+      let hardFallback = null;
 
-      const script = document.createElement("script");
-      script.src = "https://www.audimedia.tv/embed.js";
-      script.id = `amc-video-${video.id}-en`;
-      script.setAttribute("data-autoplay", "true");
-      script.async = true;
+      const finish = (ok, reason, extra = {}) => {
+        if (completed || token !== this.playToken) return;
+        completed = true;
+        this.clearTimer(startupTimer);
+        this.clearTimer(hardFallback);
 
-      let timerStarted = false;
-      const startEndTimer = () => {
-        if (timerStarted || token !== this.playToken) return;
-        timerStarted = true;
-        this.status(`Playing: ${video.title}`);
-        const runtime = Number(video.durationSeconds) || 90;
-        const delay = (runtime + this.options.audiEndBufferSeconds) * 1000;
-        this.audiTimer = setTimeout(() => {
-          if (token === this.playToken && typeof onEnd === "function") {
-            onEnd({ reason: "timed-end", video });
-          }
-        }, delay);
-      };
-
-      this.audiObserver = new MutationObserver(() => {
-        const playerLike = host.querySelector("iframe, video, object, embed, [class*='player']");
-        if (playerLike) {
-          this.audiObserver.disconnect();
-          setTimeout(startEndTimer, 1200);
+        if (this.audiMessageHandler) {
+          window.removeEventListener("message", this.audiMessageHandler);
+          this.audiMessageHandler = null;
         }
-      });
-      this.audiObserver.observe(host, { childList: true, subtree: true });
 
-      this.audiLoadFallback = setTimeout(startEndTimer, 5000);
+        if (ok) this.status(`Finished: ${video.title} (${reason})`);
+        else this.status(`Skipped unavailable Audi video: ${video.title} (${reason})`);
 
-      script.onerror = () => {
-        if (token !== this.playToken) return;
-        this.status(`Audi MediaTV could not load: ${video.title}`);
-        if (this.audiObserver) this.audiObserver.disconnect();
-        if (this.audiLoadFallback) clearTimeout(this.audiLoadFallback);
-        setTimeout(() => {
-          if (token === this.playToken && typeof onEnd === "function") {
-            onEnd({ reason: "error", video });
-          }
-        }, 1800);
+        if (typeof onEnd === "function") {
+          onEnd({ ok, reason, video, ...extra });
+        }
       };
 
-      host.appendChild(script);
+      const frameToken = `${token}-${video.number}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+      const iframe = document.createElement("iframe");
+      iframe.className = "audi-isolated-frame";
+      iframe.title = video.title;
+      iframe.allow = "autoplay; fullscreen";
+      iframe.allowFullscreen = true;
+      iframe.referrerPolicy = "strict-origin-when-cross-origin";
+      iframe.frameBorder = "0";
+
+      const params = new URLSearchParams({
+        id: video.id,
+        duration: String(Number(video.durationSeconds) || 90),
+        token: frameToken
+      });
+
+      iframe.src = `audi-player.html?${params.toString()}`;
+      this.audiFrame = iframe;
+      this.mount.appendChild(iframe);
+
+      startupTimer = this.setTimer(() => {
+        if (!ready) finish(false, "audi-startup-timeout");
+      }, this.options.audiStartupTimeoutSeconds * 1000);
+
+      this.audiMessageHandler = (event) => {
+        if (event.origin !== window.location.origin) return;
+        const data = event.data;
+        if (!data || data.token !== frameToken) return;
+
+        if (data.type === "audi-showcase-media-ready") {
+          if (ready || completed) return;
+          ready = true;
+          this.clearTimer(startupTimer);
+          startupTimer = null;
+          this.status(`Playing: ${video.title}`);
+
+          const runtime = Number(video.durationSeconds) || 90;
+          hardFallback = this.setTimer(() => {
+            // Audi does not publish an end callback. Reaching the expected
+            // runtime plus a generous buffer is treated as a normal completion.
+            finish(true, "parent-runtime-fallback");
+          }, (runtime + this.options.audiHardFallbackSeconds) * 1000);
+          return;
+        }
+
+        if (data.type === "audi-showcase-media-ended") {
+          finish(data.ok !== false, data.reason || "audi-child-ended", {
+            childDetail: data.detail || null
+          });
+        }
+      };
+
+      window.addEventListener("message", this.audiMessageHandler);
+
+      iframe.addEventListener("error", () => {
+        finish(false, "audi-frame-load-error");
+      }, { once: true });
     }
   }
 

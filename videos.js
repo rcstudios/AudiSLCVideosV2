@@ -1,15 +1,13 @@
 /*
-  Audi Showcase TV — video catalog
-  --------------------------------
+  Audi Film Showcase — video catalog
+  ----------------------------------
   Audi MediaTV entries need durationSeconds because Audi's public embed does not
-  expose a documented end-of-video callback. YouTube entries advance using the
-  official YouTube IFrame API ENDED event.
+  expose a documented end-of-video callback. YouTube entries use the YouTube
+  IFrame API and advance automatically when playback ends.
 
-  To add a new Audi MediaTV video:
-  { number: 35, title: "Title", type: "audi", id: "1234", durationSeconds: 60, source: "Audi Media Center" }
-
-  To add a YouTube video:
-  { number: 36, title: "Title", type: "youtube", id: "VIDEO_ID", source: "Audi USA" }
+  IMPORTANT: A video is never removed from this catalog automatically. If a
+  source disappears, the player skips it for the current browser session and
+  records a warning in the Film Library. Reloading the site will try it again.
 */
 
 window.AUDI_SHOWCASE_VIDEOS = [
@@ -47,5 +45,24 @@ window.AUDI_SHOWCASE_VIDEOS = [
   { number: 31, title: "2011 Audi A8: Pure Aesthetics", type: "youtube", id: "eMAR5OnG4ro", source: "Audi USA" },
   { number: 32, title: "Audi R: What it Takes", type: "youtube", id: "ltwtYi6ZjuY", source: "Audi USA" },
   { number: 33, title: "The Driven", type: "youtube", id: "9dDS5OJMzBc", source: "Audi USA" },
-  { number: 34, title: "Four Things. Four Rings. Sedona in an Audi e-tron SUV", type: "youtube", id: "9DboAwxJmhA", source: "Audi USA" }
+  { number: 34, title: "Four Things. Four Rings. Sedona in an Audi e-tron SUV", type: "youtube", id: "9DboAwxJmhA", source: "Audi USA" },
+
+  { number: 35, title: "RS5-RS3-AUDI-SLC-UNLISTED", type: "youtube", id: "dtY-CNb-pSU", source: "981 Ghost" },
+  { number: 36, title: "Q5-S3-AUDI-SLC-UNLISTED", type: "youtube", id: "y4bW19mw54A", source: "981 Ghost" },
+  { number: 37, title: "JACKS-RS5-AUDI-SLC-UNLISTED", type: "youtube", id: "HHdlThWhGl4", source: "981 Ghost" },
+  { number: 38, title: "Strive for clarity: the new Audi Concept C", type: "youtube", id: "FAB1ke7Rero", source: "Audi" },
+  { number: 39, title: "24 years. And counting. Audi | FIS", type: "youtube", id: "d0hMfKVtQcg", source: "Audi" },
+  { number: 40, title: "A Bow to Singapore's Night Sky | The Audi RS 5", type: "youtube", id: "24pgZnHDQnc", source: "Audi" },
+  { number: 41, title: "Audi A6 allroad: Design goes offroad", type: "youtube", id: "AcppJNuuAxw", source: "Audi" },
+  { number: 42, title: "A Drift Through Time", type: "youtube", id: "VqMxOwgKzjk", source: "Audi" },
+  { number: 43, title: "Continuing the legacy | The Audi A6 Avant", type: "youtube", id: "HCAdRu4YlFw", source: "Audi" },
+  { number: 44, title: "AUDI LEGENDS Ep7: AUDI RS5 B8 (2010-2013) V8 4.2 - Was the first RS5, the one with the most soul?", type: "youtube", id: "wKYP0PRclBk", source: "Auditography" },
+  { number: 45, title: "The fully electric Audi Q8 e-tron | Experience curated sophistication", type: "youtube", id: "z2Ml8jIbyGg", source: "Audi" },
+  { number: 46, title: "The Audi RS6 Avant GT", type: "youtube", id: "96jyuLyvC3s", source: "Audi" },
+  { number: 47, title: "Meet the Audi RS3 Sedan", type: "youtube", id: "YRR25-QgoQc", source: "Audi" },
+  { number: 48, title: "40 years of Audi Sport | Power, precision and an electrifying future", type: "youtube", id: "EP0p1cNKlv4", source: "Audi" },
+  { number: 49, title: "Audi x Hahnenkamm Races 2025", type: "youtube", id: "xCBsmlHggsE", source: "Audi" },
+  { number: 50, title: "Audi RS 6 Avant GT - Design Walkaround", type: "youtube", id: "NH8U6z3bxr8", source: "Audi" },
+  { number: 51, title: "Audi Driving Experience 2026", type: "youtube", id: "c1_GcaDf0FU", source: "Audi" },
+  { number: 52, title: "The legend behind Electrikhana | Audi x A tribute to Ken Block", type: "youtube", id: "Inwuw4i2rrw", source: "Audi" }
 ];
